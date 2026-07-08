@@ -4,6 +4,14 @@
 
 基于 Node.js + SQLite 的自托管系统，支持多用户隔离、邮箱资产管理、GPT 账号仓库、API 开放接口。
 
+## 功能截图
+<img width="1781" height="816" alt="image" src="https://github.com/user-attachments/assets/8013180f-ad99-4c31-8674-0d1747f96a39" />
+<img width="1884" height="894" alt="image" src="https://github.com/user-attachments/assets/7ae160d9-4e15-4af3-9b7f-c7d4579ccfec" />
+<img width="1902" height="879" alt="image" src="https://github.com/user-attachments/assets/28c1540d-596d-4f74-9f03-cf0cead2cb50" />
+<img width="1898" height="854" alt="image" src="https://github.com/user-attachments/assets/853c1c6f-d63c-46be-87e7-21d1067b36b9" />
+<img width="1908" height="563" alt="image" src="https://github.com/user-attachments/assets/77462c3d-f6a9-4d02-aaf2-c30bebc61428" />
+<img width="1882" height="820" alt="image" src="https://github.com/user-attachments/assets/42c88647-7bcb-46ef-a13b-b667ccc9296e" />
+
 ## 功能总览
 
 - **邮箱资产管理** — 批量导入 Outlook/Hotmail 邮箱，刷新 Token 加密存储，自动扫描分类
