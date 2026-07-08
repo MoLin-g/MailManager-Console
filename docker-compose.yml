@@ -1,0 +1,11 @@
+services:
+  mail-admin:
+    build: .
+    container_name: mail-admin
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8009}:8009"
+    volumes:
+      - ./data:/app/data

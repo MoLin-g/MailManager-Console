@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MailManager Console</title>
+  <link rel="stylesheet" href="/assets/app.css?v=20260624-mm-console">
+</head>
+<body>
+  <main id="auth-view" class="auth-view">
+    <aside class="auth-intro">
+      <div class="auth-intro-inner">
+        <div class="auth-intro-brand">
+          <span class="brand-mark large">M</span>
+          <h1>MailManager Console</h1>
+          <p class="auth-intro-tagline">一站式邮箱资产运营与 GPT 账号管理平台</p>
+        </div>
+        <ul class="auth-intro-features">
+          <li>
+            <span class="icon intro-icon" data-icon="inbox"></span>
+            <div><strong>邮箱资产管理</strong><span>批量导入、扫描验证、状态追踪</span></div>
+          </li>
+          <li>
+            <span class="icon intro-icon" data-icon="box"></span>
+            <div><strong>GPT 账号仓库</strong><span>从注册到导出全链路管控</span></div>
+          </li>
+          <li>
+            <span class="icon intro-icon" data-icon="mail"></span>
+            <div><strong>邮件实时查看</strong><span>收件箱、垃圾箱一键监控</span></div>
+          </li>
+          <li>
+            <span class="icon intro-icon" data-icon="scan-line"></span>
+            <div><strong>自动化巡检</strong><span>CPA / Sub2 凭证健康检测与刷新</span></div>
+          </li>
+          <li>
+            <span class="icon intro-icon" data-icon="key-round"></span>
+            <div><strong>API 中心</strong><span>开放接口，快速对接外部系统</span></div>
+          </li>
+        </ul>
+        <div class="auth-intro-footer">
+          <span>MailManager-compatible</span>
+          <span>・</span>
+          <span>安全・高效・可扩展</span>
+        </div>
+      </div>
+    </aside>
+    <section class="auth-form-side">
+      <section id="login-panel" class="auth-panel">
+        <div class="brand-lockup">
+          <span class="brand-mark">M</span>
+          <div>
+            <h1>欢迎回来</h1>
+            <p>登录你的 MailManager 账号</p>
+          </div>
+        </div>
+        <div class="field-stack">
+          <label>用户名<input id="login-username" autocomplete="username"></label>
+          <label>密码<input id="login-password" type="password" autocomplete="current-password"></label>
+        </div>
+        <button id="login-btn" class="button primary wide">
+          <span class="icon" data-icon="log-in"></span>
+          登录
+        </button>
+        <div class="auth-divider">
+          <span>或</span>
+        </div>
+        <button id="show-register-btn" class="button register-link wide">
+          <span class="icon" data-icon="key"></span>
+          使用邀请码注册
+        </button>
+        <p id="login-error" class="form-error"></p>
+      </section>
+
+      <section id="register-panel" class="auth-panel hidden">
+        <div class="brand-lockup">
+          <span class="brand-mark">M</span>
+          <div>
+            <h1>注册账号</h1>
+            <p>需要管理员邀请码</p>
+          </div>
+        </div>
+        <div class="field-stack">
+          <label>用户名<input id="register-username" autocomplete="username" placeholder="例如 operator01"></label>
+          <label>密码<input id="register-password" type="password" autocomplete="new-password" placeholder="至少 8 位"></label>
+          <label>邀请码<input id="register-invite" placeholder="管理员生成的邀请码"></label>
+        </div>
+        <button id="register-btn" class="button primary wide">注册</button>
+        <button id="show-login-btn" class="button ghost wide">返回登录</button>
+        <p id="register-error" class="form-error"></p>
+      </section>
+    </section>
+  </main>
+
+  <main id="app-view" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand-lockup compact">
+        <span class="brand-mark">M</span>
+        <div>
+          <strong>MailManager</strong>
+          <small id="role-badge">user</small>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <button class="nav-item active" data-tab="overview"><span class="icon" data-icon="layout-dashboard"></span>概览</button>
+        <button class="nav-item" data-tab="mailboxes"><span class="icon" data-icon="inbox"></span>邮箱资产</button>
+        <button class="nav-item" data-tab="gptaccounts"><span class="icon" data-icon="box"></span>GPT账号</button>
+        <button class="nav-item" data-tab="messages"><span class="icon" data-icon="mail"></span>邮件查看</button>
+        <button class="nav-item" data-tab="rules"><span class="icon" data-icon="list-filter"></span>分类规则</button>
+        <button class="nav-item" data-tab="api"><span class="icon" data-icon="key-round"></span>API 中心</button>
+        <button class="nav-item admin-only hidden" data-tab="admin"><span class="icon" data-icon="shield"></span>管理员</button>
+      </nav>
+      <button id="logout-btn" class="button ghost wide bottom-action">
+        <span class="icon" data-icon="log-out"></span>
+        退出
+      </button>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">概览</h1>
+          <p id="page-subtitle">资产、扫描、验证码和接口状态</p>
+        </div>
+        <div class="top-actions">
+          <button id="refresh-current-btn" class="icon-button" title="刷新">
+            <span class="icon" data-icon="refresh-cw"></span>
+          </button>
+          <div id="user-chip" class="user-chip"></div>
+        </div>
+      </header>
+
+      <section id="tab-overview" class="tab-panel active">
+        <section id="stats-grid" class="metric-grid"></section>
+        <section class="grid two">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>扫描队列</h2>
+              <div class="button-row">
+                <button id="overview-scan-used-btn" class="button secondary">复检已用</button>
+                <button id="overview-scan-unused-btn" class="button ghost">复检未用</button>
+              </div>
+            </div>
+            <div class="progress-block">
+              <div class="progress-line"><span id="scan-progress-label">未开始</span><strong id="scan-progress-pct">0%</strong></div>
+              <div class="progress"><div id="scan-progress-fill"></div></div>
+            </div>
+            <pre id="overview-log" class="log-box compact"></pre>
+          </article>
+          <article class="panel">
+            <div class="panel-head">
+              <h2>错误聚合</h2>
+              <button class="button ghost" data-goto="mailboxes" data-filter="error">查看</button>
+            </div>
+            <div id="error-list" class="stack-list"></div>
+          </article>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>最近资产</h2>
+            <button class="button ghost" data-goto="mailboxes">全部邮箱</button>
+          </div>
+          <div id="recent-list" class="recent-grid"></div>
+        </section>
+      </section>
+
+      <section id="tab-mailboxes" class="tab-panel">
+        <section class="panel accounts-panel mailboxes-panel">
+          <div class="panel-head">
+            <div>
+              <h2>邮箱资产</h2>
+              <p id="mailbox-count" class="muted">0 个邮箱</p>
+            </div>
+            <div class="button-row">
+              <button id="import-open-btn" class="button secondary"><span class="icon" data-icon="upload"></span>导入</button>
+              <button id="test-selected-btn" class="button ghost" disabled><span class="icon" data-icon="plug"></span>测试连接</button>
+              <button id="restore-selected-btn" class="button ghost" disabled>恢复选中为 safe</button>
+              <button id="restore-used-selected-btn" class="button ghost" disabled>恢复选中为已用</button>
+              <button id="delete-selected-btn" class="button danger" disabled>删除选中</button>
+              <button id="delete-category-btn" class="button danger">删除当前分类</button>
+              <button id="export-btn" class="button ghost"><span class="icon" data-icon="download"></span>导出</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="search-box">
+              <span class="icon" data-icon="search"></span>
+              <input id="account-search" placeholder="搜索邮箱、标签、原因">
+            </div>
+            <select id="status-filter"></select>
+            <select id="page-size">
+              <option>10</option>
+              <option selected>20</option>
+              <option>50</option>
+              <option>100</option>
+            </select>
+              <label class="mini-field">并发<input id="concurrency" type="number" min="1" max="20" value="3"></label>
+              <label class="mini-field">邮件<input id="limit" type="number" min="1" max="200" value="50"></label>
+            <button id="scan-takeable-btn" class="button primary"><span class="icon" data-icon="scan-line"></span>复检可用</button>
+            <button id="scan-unused-btn" class="button secondary" title="只复检正常未用，包含可用和未扫描，不包含待确认、错误、失效、不收码和已用">复检未用</button>
+            <button id="scan-used-btn" class="button secondary" title="复检所有已用，不是当前页">复检已用</button>
+            <button id="scan-visible-btn" class="button secondary">扫描当前页</button>
+            <button id="scan-filtered-btn" class="button ghost">扫描筛选</button>
+            <button id="scan-btn" class="button ghost">高级全量扫描</button>
+            <button id="stop-btn" class="button danger" disabled>停止</button>
+          </div>
+          <div id="selection-bar" class="selection-bar hidden">
+            <span id="selection-count">已选择 0 个邮箱</span>
+            <button id="select-page-link" class="link-button" type="button">本页全选</button>
+            <span class="selection-dot">·</span>
+            <button id="clear-selection-btn" class="link-button" type="button">清除选择</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th><input id="select-page-accounts" type="checkbox" aria-label="选择当前页"></th><th>#</th><th>邮箱</th><th>分类</th><th>状态</th><th>消费</th><th>收码</th><th>邮件</th><th>原因</th><th>扫描时间</th><th></th></tr>
+              </thead>
+              <tbody id="accounts-body"></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <span id="pager-info">0-0 / 0</span>
+            <button id="prev-page-btn" class="button ghost">上一页</button>
+            <button id="next-page-btn" class="button ghost">下一页</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="tab-gptaccounts" class="tab-panel">
+        <section class="gpt-dashboard">
+          <div class="mini-metric"><strong id="gpt-metric-pending">0</strong><span>待导出</span></div>
+          <div class="mini-metric"><strong id="gpt-metric-exported">0</strong><span>已导出</span></div>
+          <div class="mini-metric"><strong id="gpt-metric-exception">0</strong><span>异常</span></div>
+          <div class="mini-metric"><strong id="gpt-metric-failed">0</strong><span>注册失败</span></div>
+          <div class="mini-metric"><strong id="gpt-metric-refresh">0</strong><span>刷新队列</span></div>
+          <div class="mini-metric"><strong id="gpt-metric-phone">0</strong><span>手机池</span></div>
+        </section>
+        <section class="gpt-native-tabs" aria-label="GPT账号功能">
+          <button class="gpt-native-tab active" data-gpt-panel="warehouse" type="button">账号仓库</button>
+          <button class="gpt-native-tab" data-gpt-panel="refresh" type="button">凭证刷新</button>
+          <button class="gpt-native-tab" data-gpt-panel="cpa" type="button">CPA 仓管</button>
+          <button class="gpt-native-tab" data-gpt-panel="converter" type="button">Session 转换</button>
+          <button class="gpt-native-tab" data-gpt-panel="rules" type="button">规则与手机池</button>
+          <button class="gpt-native-tab" data-gpt-panel="jobs" type="button">队列</button>
+          <button class="gpt-native-tab" data-gpt-panel="logs" type="button">导出日志</button>
+        </section>
+        <section id="gpt-panel-warehouse" class="panel accounts-panel gpt-native-panel active">
+          <div class="panel-head">
+            <div>
+              <h2>GPT账号仓库</h2>
+              <p id="gpt-account-count" class="muted">0 个账号</p>
+            </div>
+            <div class="button-row">
+              <button id="gpt-import-toggle-btn" class="button ghost"><span class="icon" data-icon="upload"></span>手动导入</button>
+              <button id="gpt-export-sub2-btn" class="button primary" disabled><span class="icon" data-icon="download"></span>导出 Sub2</button>
+              <button id="gpt-export-cpa-btn" class="button secondary" disabled><span class="icon" data-icon="download"></span>导出 CPA</button>
+              <button id="gpt-export-cockpit-btn" class="button secondary" disabled><span class="icon" data-icon="download"></span>导出 Cockpit</button>
+              <button id="gpt-refresh-queue-btn" class="button ghost" disabled>加入刷新</button>
+              <button id="gpt-inspect-queue-btn" class="button ghost" disabled>加入巡检</button>
+              <button id="gpt-wenas-config-btn" class="button ghost"><span class="icon" data-icon="settings"></span>卡密配置</button>
+              <button id="gpt-wenas-sync-btn" class="button secondary" disabled><span class="icon" data-icon="upload"></span>同步卡密</button>
+              <button id="gpt-wenas-check-btn" class="button ghost" disabled><span class="icon" data-icon="check"></span>创建测活</button>
+              <button id="gpt-archive-btn" class="button ghost" disabled>归档选中</button>
+              <button id="gpt-delete-btn" class="button danger" disabled>删除选中</button>
+            </div>
+          </div>
+          <section id="gpt-import-panel" class="sub-panel hidden">
+            <div class="panel-head compact-head">
+              <div>
+                <h3>手动导入 GPT 账号</h3>
+                <p class="muted">支持 JSON 数组、单条 JSON，或逐行：邮箱----密码----refresh_token----access_token----id_token----session_token</p>
+              </div>
+              <button id="gpt-import-close-btn" class="icon-button" title="关闭"><span class="icon" data-icon="x"></span></button>
+            </div>
+            <div class="import-grid">
+              <label class="field">导入批次<input id="gpt-import-batch" placeholder="例如 2026-06-02-第一批"></label>
+              <label class="field">默认代理<input id="gpt-import-proxy" placeholder="例如 http://127.0.0.1:7892"></label>
+              <label class="field">Sub2 分组<input id="gpt-import-sub2-group" placeholder="例如 测试生图"></label>
+              <label class="field">默认结果
+                <select id="gpt-import-result">
+                  <option value="success">成功</option>
+                  <option value="partial">部分完成</option>
+                  <option value="failed">失败</option>
+                </select>
+              </label>
+            </div>
+            <textarea id="gpt-import-text" class="import-textarea" placeholder='[{"email":"user@example.com","password":"pass","refresh_token":"rt_xxx","access_token":"at_xxx"}]'></textarea>
+            <div class="button-row">
+              <input id="gpt-import-file-input" class="hidden" type="file" accept=".json,.txt,.csv,.ndjson,application/json,text/plain,text/csv" multiple>
+              <button id="gpt-import-file-btn" class="button ghost"><span class="icon" data-icon="upload"></span>选择文件</button>
+              <button id="gpt-import-submit-btn" class="button primary"><span class="icon" data-icon="upload"></span>导入账号</button>
+              <button id="gpt-import-sample-btn" class="button ghost">填入示例</button>
+              <button id="gpt-import-clear-btn" class="button ghost">清空</button>
+              <span id="gpt-import-result-text" class="muted"></span>
+            </div>
+          </section>
+          <section id="gpt-wenas-panel" class="sub-panel hidden">
+            <div class="panel-head compact-head">
+              <div>
+                <h3>卡密系统对接</h3>
+                <p class="muted">保存 OpenAPI 配置后，可把选中的 GPT 账号同步到 Wenas-Ai，并创建或回写测活任务。</p>
+              </div>
+              <button id="gpt-wenas-close-btn" class="icon-button" title="关闭"><span class="icon" data-icon="x"></span></button>
+            </div>
+            <div class="import-grid">
+              <label class="field">Wenas 地址<input id="gpt-wenas-base-url" placeholder="http://127.0.0.1:9950"></label>
+              <label class="field">API Key<input id="gpt-wenas-api-key" autocomplete="off"></label>
+              <label class="field">API Secret<input id="gpt-wenas-api-secret" type="password" autocomplete="off"></label>
+              <label class="field">来源标识<input id="gpt-wenas-source-platform" placeholder="mailops-gpt"></label>
+              <label class="field">产品 ID<input id="gpt-wenas-product-id" inputmode="numeric"></label>
+              <label class="field">产品标识<input id="gpt-wenas-product-slug" placeholder="gptmail-account"></label>
+              <label class="field">外部产品 ID<input id="gpt-wenas-external-product-id" placeholder="gptmail"></label>
+              <label class="field">SKU ID<input id="gpt-wenas-sku-id" inputmode="numeric"></label>
+              <label class="field">SKU 编码<input id="gpt-wenas-sku-code" placeholder="gptmail-default"></label>
+              <label class="field">批次前缀<input id="gpt-wenas-batch-prefix" placeholder="mailops-gpt"></label>
+              <label class="field wide-field">回调地址<input id="gpt-wenas-callback-url" placeholder="可选"></label>
+            </div>
+            <div class="button-row">
+              <button id="gpt-wenas-save-btn" class="button primary" type="button"><span class="icon" data-icon="save"></span>保存配置</button>
+              <button id="gpt-wenas-test-btn" class="button ghost" type="button"><span class="icon" data-icon="plug"></span>测试连接</button>
+              <span id="gpt-wenas-status" class="muted"></span>
+            </div>
+            <div class="import-grid">
+              <label class="field">测活结果
+                <select id="gpt-wenas-result">
+                  <option value="alive">alive</option>
+                  <option value="dead">dead</option>
+                  <option value="unknown">unknown</option>
+                </select>
+              </label>
+              <label class="field">置信度<input id="gpt-wenas-confidence" type="number" min="0" max="1" step="0.01" value="1"></label>
+              <label class="field wide-field">结果说明<input id="gpt-wenas-message" placeholder="例如：登录成功 / token 失效"></label>
+              <label class="field checkbox-field"><span>同步业务状态</span><input id="gpt-wenas-apply-result" type="checkbox" checked></label>
+            </div>
+            <div class="button-row">
+              <button id="gpt-wenas-result-btn" class="button secondary" type="button" disabled><span class="icon" data-icon="check"></span>回写选中测活结果</button>
+            </div>
+          </section>
+          <div class="toolbar">
+            <div class="search-box">
+              <span class="icon" data-icon="search"></span>
+              <input id="gpt-search" placeholder="搜索邮箱、手机号、批次、错误">
+            </div>
+            <select id="gpt-status-filter">
+              <option value="">全部状态</option>
+              <option value="pending_export">待导出</option>
+              <option value="exported">已导出</option>
+              <option value="exception">异常</option>
+              <option value="failed">注册失败</option>
+              <option value="needs_review">需复查</option>
+              <option value="archived">已归档</option>
+            </select>
+            <select id="gpt-result-filter">
+              <option value="">全部结果</option>
+              <option value="success">成功</option>
+              <option value="partial">部分完成</option>
+              <option value="failed">失败</option>
+            </select>
+            <select id="gpt-source-filter">
+              <option value="">全部来源</option>
+              <option value="register_machine">注册机上报</option>
+              <option value="manual_import">手动导入</option>
+              <option value="session_converter">Session 导入</option>
+              <option value="cpa_import">CPA 导入</option>
+              <option value="sub2_import">Sub2 导入</option>
+            </select>
+            <select id="gpt-export-filter">
+              <option value="">全部导出</option>
+              <option value="unexported">未导出</option>
+              <option value="exported">已导出</option>
+              <option value="cpa">已导出 CPA</option>
+              <option value="sub2">已导出 Sub2</option>
+              <option value="archived">已归档</option>
+            </select>
+            <select id="gpt-page-size">
+              <option>10</option>
+              <option selected>20</option>
+              <option>50</option>
+              <option>100</option>
+            </select>
+            <button id="refresh-gpt-accounts-btn" class="button ghost"><span class="icon" data-icon="refresh-cw"></span>刷新</button>
+          </div>
+          <div id="gpt-selection-bar" class="selection-bar hidden">
+            <span id="gpt-selection-count">已选择 0 个账号</span>
+            <button id="gpt-select-page-link" class="link-button" type="button">本页全选</button>
+            <span class="selection-dot">·</span>
+            <button id="gpt-clear-selection-btn" class="link-button" type="button">清除选择</button>
+          </div>
+          <div id="gpt-status-summary" class="status-summary"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th><input id="select-page-gpt-accounts" type="checkbox" aria-label="选择当前页"></th><th>#</th><th>账号</th><th>来源</th><th>结果</th><th>状态</th><th>卡密</th><th>测活</th><th>导出</th><th>CPA</th><th>Sub2</th><th>计划</th><th>批次</th><th>错误</th><th>时间</th></tr>
+              </thead>
+              <tbody id="gpt-accounts-body"></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <span id="gpt-pager-info">0-0 / 0</span>
+            <button id="gpt-prev-page-btn" class="button ghost">上一页</button>
+            <button id="gpt-next-page-btn" class="button ghost">下一页</button>
+          </div>
+        </section>
+        <section id="gpt-panel-refresh" class="panel gpt-native-panel hidden">
+          <div class="panel-head">
+            <div>
+              <h2>凭证刷新工作台</h2>
+              <p class="muted">使用服务器/NAS 代理执行 OpenAI OAuth 登录，收邮箱验证码后生成 CPA auth JSON。</p>
+            </div>
+            <div class="button-row">
+              <button id="gpt-sync-mailbox-btn" class="button ghost"><span class="icon" data-icon="upload"></span>同步邮箱凭证</button>
+              <button id="gpt-proxy-check-btn" class="button ghost"><span class="icon" data-icon="refresh-cw"></span>测试代理</button>
+              <button id="gpt-native-refresh-selected-btn" class="button primary" disabled>刷新选中</button>
+              <button id="gpt-refresh-stop-btn" class="button danger" disabled>停止</button>
+            </div>
+          </div>
+          <div class="gpt-form-grid">
+            <label class="field">代理地址<input id="gpt-refresh-proxy" placeholder="http://user:pass@host:port 或 socks5://..."></label>
+            <label class="field">CPA 地址<input id="gpt-refresh-cpa-base" placeholder="可选，填写后刷新成功自动上传"></label>
+            <label class="field">CPA 管理密钥<input id="gpt-refresh-cpa-key" type="password" placeholder="可选"></label>
+            <label class="field">刷新模式
+              <select id="gpt-refresh-mode">
+                <option value="login">已有账号登录刷新</option>
+              </select>
+            </label>
+            <label class="field">邮箱验证码<input id="gpt-refresh-manual-email-code" placeholder="通常自动收取，手动时填写"></label>
+            <label class="field">手机验证码<input id="gpt-refresh-manual-phone-code" placeholder="遇到手机验证时填写"></label>
+            <label class="field wide-field">手机接码 API URL<input id="gpt-refresh-phone-api" placeholder="可选，支持 {phone} / {email} / {since}"></label>
+          </div>
+          <div class="progress-card">
+            <div class="progress-meta"><span id="gpt-refresh-progress-label">未开始</span><span id="gpt-refresh-status">等待选择账号</span></div>
+            <div class="progress-track"><div id="gpt-refresh-progress-fill"></div></div>
+            <pre id="gpt-refresh-log" class="terminal mini-terminal"></pre>
+          </div>
+          <div class="table-wrap mini-table">
+            <table>
+              <thead><tr><th>账号</th><th>状态</th><th>结果</th><th>更新时间</th></tr></thead>
+              <tbody id="gpt-refresh-live-body"><tr><td colspan="4"><div class="empty">暂无刷新任务。</div></td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section id="gpt-panel-cpa" class="panel gpt-native-panel hidden">
+          <div class="panel-head">
+            <div>
+              <h2>CPA 仓管</h2>
+              <p class="muted">扫描 CPA/CLIProxyAPI auth 文件，识别 401、封禁、风控、额度、RT 失效，并支持删除异常凭证。</p>
+            </div>
+            <div class="button-row">
+              <button id="gpt-cpa-scan-btn" class="button primary"><span class="icon" data-icon="scan-line"></span>开始巡检</button>
+              <button id="gpt-cpa-queue-refresh-btn" class="button ghost" disabled>加入刷新工作台</button>
+              <button id="gpt-cpa-delete-btn" class="button danger" disabled>删除选中</button>
+            </div>
+          </div>
+          <div class="gpt-form-grid">
+            <label class="field">CPA 地址<input id="gpt-cpa-base-url" placeholder="https://sub.example.com 或 http://host:8317"></label>
+            <label class="field">CPA 管理密钥<input id="gpt-cpa-key" type="password" placeholder="Bearer 管理密钥"></label>
+            <label class="field">扫描数量<input id="gpt-cpa-limit" type="number" min="1" max="500" value="50"></label>
+            <label class="field checkbox-field"><input id="gpt-cpa-use-proxy" type="checkbox">巡检探测使用代理</label>
+            <label class="field wide-field">代理地址<input id="gpt-cpa-proxy" placeholder="默认沿用刷新代理"></label>
+          </div>
+          <div id="gpt-cpa-summary" class="status-summary"></div>
+          <div class="table-wrap gpt-cpa-table">
+            <table>
+              <thead>
+                <tr><th><input id="gpt-cpa-select-all" type="checkbox" aria-label="选择巡检结果"></th><th>名称</th><th>邮箱</th><th>状态</th><th>诊断</th><th>建议</th></tr>
+              </thead>
+              <tbody id="gpt-cpa-body"><tr><td colspan="6"><div class="empty">填写 CPA 地址和管理密钥后开始巡检。</div></td></tr></tbody>
+            </table>
+          </div>
+        </section>
+        <section id="gpt-panel-converter" class="panel gpt-native-panel hidden">
+          <div class="panel-head">
+            <div>
+              <h2>Session 转换</h2>
+              <p class="muted">粘贴 ChatGPT Web Session，转换为 CPA、Sub2、Cockpit、9router、AxonHub 或 Codex-Manager JSON。</p>
+            </div>
+            <div class="button-row">
+              <select id="gpt-converter-format">
+                <option value="sub2api">Sub2API</option>
+                <option value="cpa">CPA auth</option>
+                <option value="cockpit">Cockpit</option>
+                <option value="9router">9router</option>
+                <option value="axonhub">AxonHub</option>
+                <option value="codexmanager">Codex-Manager</option>
+              </select>
+              <input id="gpt-session-file-input" class="hidden" type="file" accept=".json,application/json" multiple>
+              <button id="gpt-session-file-btn" class="button ghost"><span class="icon" data-icon="upload"></span>导入文件</button>
+              <button id="gpt-session-sample-btn" class="button ghost">示例</button>
+              <button id="gpt-session-clear-btn" class="button ghost">清除</button>
+              <button id="gpt-session-copy-btn" class="button ghost" disabled>复制</button>
+              <button id="gpt-session-download-btn" class="button primary" disabled>下载 JSON</button>
+              <button id="gpt-session-import-btn" class="button secondary" disabled>导入仓库</button>
+            </div>
+          </div>
+          <div class="inline-guide session-guide">
+            已登录 ChatGPT 后打开
+            <a href="https://chatgpt.com/api/auth/session" target="_blank" rel="noopener">https://chatgpt.com/api/auth/session</a>
+            ，复制页面 JSON 后粘贴到下方；也可以直接导入 JSON 文件。
+          </div>
+          <div class="converter-grid">
+            <label class="field">输入 Session JSON<textarea id="gpt-session-input" class="import-textarea converter-textarea" placeholder='{"user":{"email":"mark@example.com"},"accessToken":"...","sessionToken":"..."}'></textarea></label>
+            <label class="field">输出 JSON<textarea id="gpt-session-output" class="import-textarea converter-textarea" readonly></textarea></label>
+          </div>
+          <div class="status-summary">
+            <span class="badge safe">已转换 <strong id="gpt-session-count">0</strong></span>
+            <span class="badge invalid">跳过 <strong id="gpt-session-error-count">0</strong></span>
+            <span id="gpt-session-status" class="muted">等待输入</span>
+          </div>
+          <div id="gpt-session-preview" class="compact-list"></div>
+        </section>
+        <section id="gpt-panel-jobs" class="gpt-workbench gpt-native-panel hidden">
+          <section class="panel">
+            <div class="panel-head compact-head">
+              <div><h2>刷新队列</h2><p class="muted">凭证刷新、auth JSON、Token 检查任务</p></div>
+              <button id="refresh-gpt-refresh-jobs-btn" class="button ghost"><span class="icon" data-icon="refresh-cw"></span>刷新</button>
+            </div>
+            <div id="gpt-refresh-jobs" class="compact-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head compact-head">
+              <div><h2>巡检队列</h2><p class="muted">CPA/Sub2/账号/额度巡检任务</p></div>
+              <button id="refresh-gpt-inspection-jobs-btn" class="button ghost"><span class="icon" data-icon="refresh-cw"></span>刷新</button>
+            </div>
+            <div id="gpt-inspection-jobs" class="compact-list"></div>
+          </section>
+        </section>
+        <section id="gpt-panel-rules" class="gpt-workbench gpt-native-panel hidden">
+          <section class="panel">
+            <div class="panel-head compact-head">
+              <div><h2>错误分类规则</h2><p class="muted">把错误归类成可处理原因</p></div>
+              <button id="gpt-rule-save-btn" class="button primary"><span class="icon" data-icon="save"></span>保存规则</button>
+            </div>
+            <div class="import-grid">
+              <input id="gpt-rule-id" type="hidden">
+              <label class="field">名称<input id="gpt-rule-name" placeholder="例如 验证码超时"></label>
+              <label class="field">分类<input id="gpt-rule-category" placeholder="例如 邮箱/验证码"></label>
+              <label class="field">关键词<input id="gpt-rule-keywords" placeholder="timeout,验证码,no code"></label>
+              <label class="field">级别
+                <select id="gpt-rule-severity">
+                  <option value="warning">警告</option>
+                  <option value="danger">严重</option>
+                  <option value="info">信息</option>
+                </select>
+              </label>
+            </div>
+            <div id="gpt-error-rules" class="compact-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head compact-head">
+              <div><h2>长效手机接码池</h2><p class="muted">记录手机号/API URL，并可绑定到 GPT 账号</p></div>
+              <button id="phone-save-btn" class="button primary"><span class="icon" data-icon="save"></span>保存手机</button>
+            </div>
+            <div class="import-grid">
+              <input id="phone-id" type="hidden">
+              <label class="field">平台<input id="phone-provider" placeholder="例如 smsbower/herosms"></label>
+              <label class="field">手机号<input id="phone-number" placeholder="+1..."></label>
+              <label class="field">API URL<input id="phone-api-url" placeholder="https://..."></label>
+              <label class="field">状态
+                <select id="phone-status">
+                  <option value="available">可用</option>
+                  <option value="reserved">预留</option>
+                  <option value="used">已用</option>
+                  <option value="invalid">无效</option>
+                  <option value="paused">暂停</option>
+                </select>
+              </label>
+            </div>
+            <input id="phone-note" placeholder="备注，例如绑定策略/账号来源">
+            <div id="phone-code-pool-list" class="compact-list"></div>
+          </section>
+        </section>
+        <section id="gpt-panel-logs" class="gpt-workbench gpt-native-panel hidden">
+          <section class="panel">
+            <div class="panel-head compact-head">
+              <div><h2>导出记录</h2><p class="muted">CPA/Sub2 导出批次，用于对账</p></div>
+              <button id="refresh-gpt-exports-btn" class="button ghost"><span class="icon" data-icon="refresh-cw"></span>刷新</button>
+            </div>
+            <div id="gpt-exports-list" class="compact-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head compact-head">
+              <div><h2>上报与操作日志</h2><p class="muted">注册机上报、手动导入、队列变更</p></div>
+              <button id="refresh-gpt-events-btn" class="button ghost"><span class="icon" data-icon="refresh-cw"></span>刷新</button>
+            </div>
+            <div id="gpt-export-detail" class="export-detail hidden"></div>
+            <div id="gpt-events-list" class="compact-list"></div>
+          </section>
+        </section>
+      </section>
+
+      <section id="tab-messages" class="tab-panel">
+        <section class="mail-layout">
+          <aside class="panel mailbox-pane">
+            <div class="search-box">
+              <span class="icon" data-icon="search"></span>
+              <input id="viewer-search" placeholder="搜索邮箱">
+            </div>
+            <div id="viewer-mailbox-list" class="mailbox-list"></div>
+          </aside>
+          <section class="panel message-pane">
+            <div class="panel-head">
+              <div>
+                <h2 id="viewer-current">邮件</h2>
+                <p class="muted">Inbox / Junk / Deleted / Sent</p>
+              </div>
+              <div class="button-row">
+                <select id="viewer-folder">
+                  <option value="inbox">收件箱</option>
+                  <option value="junk">垃圾邮件</option>
+                  <option value="deleted">已删除</option>
+                  <option value="sent">已发送</option>
+                </select>
+                <label class="mini-field">数量<input id="viewer-limit" type="number" min="1" max="50" value="20"></label>
+                <button id="load-messages-btn" class="button secondary"><span class="icon" data-icon="refresh-cw"></span>刷新</button>
+              </div>
+            </div>
+            <div id="messages-list" class="message-list"></div>
+          </section>
+        </section>
+      </section>
+
+      <section id="tab-rules" class="tab-panel">
+        <section class="grid two">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>规则编辑器</h2>
+              <button id="save-rules-btn" class="button primary"><span class="icon" data-icon="save"></span>保存</button>
+            </div>
+            <label class="field">基础关键词<textarea id="rule-base" placeholder="openai, chatgpt, gpt"></textarea></label>
+            <div id="rule-rows" class="rule-rows"></div>
+            <button id="add-rule-btn" class="button secondary"><span class="icon" data-icon="plus"></span>添加规则</button>
+            <div class="grid two tight">
+              <label class="field">兜底分类<input id="rule-fallback" value="free"></label>
+              <label class="field">未匹配分类<input id="rule-no-match" value="safe"></label>
+            </div>
+          </article>
+          <article class="panel">
+            <div class="panel-head">
+              <h2>规则测试</h2>
+              <button id="test-rule-btn" class="button secondary">测试</button>
+            </div>
+            <label class="field">邮件主题<input id="rule-test-subject" value="Your temporary OpenAI verification code"></label>
+            <label class="field">邮件正文<textarea id="rule-test-body">Your code is 123456.</textarea></label>
+            <div id="rule-test-result" class="result-card"></div>
+            <details class="json-details">
+              <summary>JSON</summary>
+              <textarea id="rule-json"></textarea>
+            </details>
+          </article>
+        </section>
+      </section>
+
+      <section id="tab-api" class="tab-panel">
+        <section class="grid two">
+          <article class="panel">
+            <div class="panel-head">
+              <h2>API Key</h2>
+              <a class="button ghost" href="/api-docs.html" target="_blank">文档</a>
+            </div>
+            <div class="toolbar">
+              <input id="api-key-name" placeholder="名称" value="default">
+              <button id="create-api-key-btn" class="button primary"><span class="icon" data-icon="key-round"></span>生成</button>
+              <button id="refresh-api-key-btn" class="button ghost"><span class="icon" data-icon="refresh-cw"></span>刷新</button>
+            </div>
+            <div id="new-api-key" class="notice hidden"></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>名称</th><th>前缀</th><th>状态</th><th>创建时间</th><th>最后使用</th><th></th></tr></thead>
+                <tbody id="api-keys-body"></tbody>
+              </table>
+            </div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><h2>调用日志</h2></div>
+            <div id="api-log-list" class="stack-list"></div>
+            <pre id="api-curl-example" class="log-box compact hidden"></pre>
+          </article>
+        </section>
+      </section>
+
+      <section id="tab-admin" class="tab-panel admin-only hidden">
+        <section class="panel primary-admin-only invite-panel admin-invite-panel">
+          <div class="panel-head">
+            <div>
+              <h2>邀请码</h2>
+              <p id="invite-summary" class="muted">生成、搜索和管理注册邀请码</p>
+            </div>
+            <div class="button-row">
+              <label class="switch"><input id="registration-enabled" type="checkbox"><span></span>开放注册</label>
+              <label class="mini-field">次数<input id="invite-uses" type="number" min="1" max="1000" value="1"></label>
+              <label class="mini-field">小时<input id="invite-hours" type="number" min="1" max="8760" value="24"></label>
+              <button id="create-invite-btn" class="button primary">生成</button>
+              <button id="refresh-invite-btn" class="button ghost">刷新</button>
+            </div>
+          </div>
+          <div class="invite-toolbar">
+            <div class="search-box">
+              <span class="icon" data-icon="search"></span>
+              <input id="invite-search" placeholder="仅搜索邀请码、状态、时间">
+            </div>
+            <select id="invite-page-size">
+              <option value="20">20</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+            <div class="pager compact">
+              <button id="invite-prev" class="button ghost">上一页</button>
+              <span id="invite-page-info" class="muted"></span>
+              <button id="invite-next" class="button ghost">下一页</button>
+            </div>
+          </div>
+          <div class="table-wrap invite-table-wrap">
+            <table>
+              <thead><tr><th>邀请码</th><th>使用</th><th>过期时间</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
+              <tbody id="invites-body"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel admin-users-panel">
+          <div class="panel-head">
+            <div>
+              <h2>账户管理</h2>
+              <p class="muted">创建、禁用、重置密码和调整角色。每个用户拥有独立邮箱池和 API Key。</p>
+            </div>
+            <div class="admin-users-head-actions">
+              <div class="search-box compact-search">
+                <span class="icon" data-icon="search"></span>
+                <input id="admin-user-jump-search" placeholder="搜索用户名定位账户">
+              </div>
+              <button id="refresh-users-btn" class="button ghost"><span class="icon" data-icon="refresh-cw"></span>刷新</button>
+            </div>
+          </div>
+          <div class="toolbar">
+            <input id="admin-new-username" placeholder="新用户名">
+            <input id="admin-new-password" type="password" placeholder="初始密码，至少8位">
+            <select id="admin-new-role">
+              <option value="user">普通用户</option>
+              <option value="admin">管理员</option>
+            </select>
+            <button id="admin-create-user-btn" class="button primary">创建账户</button>
+          </div>
+          <div class="admin-users-toolbar">
+            <div class="search-box">
+              <span class="icon" data-icon="search"></span>
+              <input id="admin-user-search" placeholder="搜索用户名">
+            </div>
+            <select id="admin-user-page-size">
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+            <div class="pager compact">
+              <button id="admin-user-prev" class="button ghost">上一页</button>
+              <span id="admin-user-page-info" class="muted"></span>
+              <button id="admin-user-next" class="button ghost">下一页</button>
+            </div>
+          </div>
+          <div class="table-wrap admin-users-table-wrap">
+            <table>
+              <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>邮箱</th><th>API Key</th><th>最后登录</th><th>创建时间</th><th></th></tr></thead>
+              <tbody id="users-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <div id="import-drawer" class="drawer hidden">
+    <div class="drawer-backdrop" data-close-drawer></div>
+    <aside class="drawer-panel">
+      <div class="panel-head">
+        <h2>导入邮箱</h2>
+        <button class="icon-button" data-close-drawer title="关闭"><span class="icon" data-icon="x"></span></button>
+      </div>
+      <label class="file-drop">
+        <span class="icon" data-icon="upload"></span>
+        上传 .txt / .csv / .json
+        <input id="file-input" type="file" accept=".txt,.csv,.json">
+      </label>
+      <button id="fill-sample-btn" class="button ghost">填入示例</button>
+      <textarea id="import-text" class="import-area" placeholder="user@hotmail.com----password----client_id----refresh_token----tag"></textarea>
+      <p class="muted">普通用户最多保留 500 个邮箱，管理员不限；超过后请先删除邮箱再导入。</p>
+      <div class="import-options">
+        <label class="switch"><input id="import-auto-scan" type="checkbox" checked><span></span>导入后自动扫描新账号</label>
+        <label class="mini-field">扫描并发<input id="import-scan-concurrency" type="number" min="1" max="20" value="3"></label>
+        <label class="mini-field">每箱邮件<input id="import-scan-limit" type="number" min="1" max="200" value="20"></label>
+      </div>
+      <div class="button-row end">
+        <button id="clear-import-btn" class="button ghost">清空</button>
+        <button id="import-btn" class="button primary">导入 / 更新</button>
+      </div>
+      <p id="import-result" class="muted"></p>
+    </aside>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/assets/app.js?v=20260624-register-ui"></script>
+</body>
+</html>

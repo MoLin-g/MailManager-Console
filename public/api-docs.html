@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MailOps API 文档。</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <main class="workspace" style="max-width:1080px;margin:0 auto">
+    <header class="topbar">
+      <div>
+        <h1>API 文档。</h1>
+        <p>给注册机、多线程脚本和外部服务调用的邮箱池接口。</p>
+      </div>
+      <a class="button ghost" href="/">返回控制台</a>
+    </header>
+
+    <section class="panel">
+      <div class="panel-head"><h2>AI 快速接入</h2></div>
+      <p class="muted">把下面这段直接给 AI 或自动化脚本即可。它包含最小配置、固定调用顺序和禁止事项。</p>
+      <pre class="log-box compact">你要接入 MailOps 邮箱池 API。
+
+BASE_URL = "http://127.0.0.1:8009"
+API_KEY = "mak_xxx"
+CATEGORY = "safe"
+CONCURRENCY = 5  # 注册机并发数；每个 worker 都必须单独调用 reserve
+CODE_KEYWORD = "code,验证码,verification code,OpenAI,ChatGPT,gpt"
+
+所有请求都带：
+Authorization: Bearer API_KEY
+Content-Type: application/json
+
+固定流程：
+1. 领取邮箱，只能用：
+   POST {BASE_URL}/api/mailboxes/reserve
+   body: {"category":CATEGORY,"consume":true}
+2. 如果返回 email 为空，表示邮箱池耗尽，停止本轮注册。
+3. 使用返回的 email 去目标系统提交绑定邮箱。
+4. 等待 10-20 秒后查询验证码：
+   GET {BASE_URL}/api/mail/code?email={email}&amp;keyword={CODE_KEYWORD}&amp;limit=10&amp;folders=inbox,junk
+5. 如果 found=false，继续间隔轮询，不要重新领取新邮箱，除非本次注册流程已经判定失败。
+
+重要限制：
+- 不要用 GET /api/mailboxes 来分配邮箱，它只是查看列表。
+- 并发注册必须用 reserve；并发数不通过 API 传，而是在注册机线程/任务数里配置。
+- 每个并发 worker 一次注册只领取一个邮箱，不能多个 worker 共享同一个 email。
+- 默认 consume=true，邮箱返回前已被服务器标记 used，不会再从 safe 池发出。
+- 验证码关键词优先填 code/验证码/verification code，其次才是 OpenAI/ChatGPT/gpt。
+- 本地 used_emails.json 只能当日志，不是防重复主逻辑。</pre>
+      <p class="muted">机器可读规格：<a href="/api-spec.json" target="_blank">/api-spec.json</a></p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>接入步骤</h2></div>
+      <ol class="muted" style="line-height:1.9">
+        <li>管理员登录控制台，导入 Outlook/Hotmail 资产，并完成可读性扫描分类。</li>
+        <li>确认要消费的邮箱在目标分类里，默认推荐 <code>safe</code>。</li>
+        <li>进入 API 中心生成 <code>mak_...</code> API Key。Key 只完整显示一次，必须立即保存到注册机配置里。</li>
+        <li>注册机配置 <code>base_url</code>、<code>api_key</code>、<code>category</code>、<code>keyword</code>、并发数和验证码轮询参数。</li>
+        <li>每个注册 worker 都通过 <code>POST /api/mailboxes/reserve</code> 领取唯一邮箱，不要用列表接口分配邮箱。</li>
+        <li>提交绑定邮件后，只对刚领取的这个邮箱调用 <code>GET /api/mail/code</code> 轮询验证码。</li>
+        <li>最终收不到码时，调用 <code>POST /api/mailboxes/report-code</code> 上报 <code>timeout</code>，后台会把邮箱隔离到 <code>no_code</code>。</li>
+      </ol>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>基础配置</h2></div>
+      <p class="muted">先确认注册机在哪里运行，再选择 <code>base_url</code>。这个值最容易填错。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>注册机位置</th><th>base_url 填写</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>和后台在同一台电脑/NAS 容器内部</td><td><code>http://127.0.0.1:8009</code></td><td>只适合同机访问。</td></tr>
+            <tr><td>局域网其他机器</td><td><code>http://192.168.6.35:8009</code></td><td>NAS 局域网地址，速度最快，但只在内网可用。</td></tr>
+            <tr><td>公网机器或外部 VPS</td><td><code>http://127.0.0.1:8009</code></td><td>走公网反代和 HTTPS，注册机不在你内网时用这个。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">所有 API 请求都要携带：</p>
+      <pre class="log-box compact">Authorization: Bearer mak_xxx
+Content-Type: application/json</pre>
+      <p class="muted">浏览器控制台登录用账号密码；注册机和外部脚本只使用 Bearer API Key，不需要也不应该处理登录 Cookie。</p>
+      <p class="muted">注册机推荐配置模板：</p>
+      <pre class="log-box compact">{
+  "email_provider": "mailmanage",
+  "mailmanage": {
+    "base_url": "http://127.0.0.1:8009",
+    "api_key": "mak_xxx",
+    "category": "safe",
+    "keyword": "code,验证码,verification code,OpenAI,ChatGPT,gpt",
+    "folders": "inbox,junk",
+    "consume": true,
+    "poll_interval_seconds": 8,
+    "poll_timeout_seconds": 180
+  },
+  "concurrency": 5
+}</pre>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>注册机填写项</h2></div>
+      <p class="muted">按当前后台接入 MailManage 时，注册机只需要填写下面这些项。邮箱账号、client_id、refresh_token 只导入到本后台，不要填进注册机。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>注册机字段</th><th>应该填写</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>邮箱提供商</td><td><code>MailManage</code></td><td>选择本后台邮箱池。</td></tr>
+            <tr><td>MailManage Base URL</td><td><code>http://127.0.0.1:8009</code></td><td>公网注册机用这个；同机测试才用 <code>http://127.0.0.1:8009</code>。</td></tr>
+            <tr><td>MailManage API Key</td><td><code>mak_xxx</code></td><td>在本后台 API 中心生成，完整 Key 只显示一次。</td></tr>
+            <tr><td>MailManage 分类</td><td><code>safe</code></td><td>注册推荐用 safe。不要填 used；free/套餐只用于特殊策略。</td></tr>
+            <tr><td>MailManage 关键词</td><td><code>code,验证码,verification code,OpenAI,ChatGPT,gpt</code></td><td>验证码邮件过滤词。优先包含 code/验证码/verification code，避免只填 gpt 时漏掉"Your verification code"这类邮件。</td></tr>
+            <tr><td>并发数</td><td><code>3-10</code></td><td>这是注册机线程/任务数，不是 API 参数。每个并发 worker 都调用一次 reserve，后台保证唯一邮箱。</td></tr>
+            <tr><td>验证码轮询间隔</td><td><code>8-10 秒</code></td><td>每次轮询同一个 email，不要没找到就重新领取。</td></tr>
+            <tr><td>验证码超时</td><td><code>180-300 秒</code></td><td>最终超时后调用 <code>/api/mailboxes/report-code</code> 上报 timeout。</td></tr>
+            <tr><td>绑定邮箱</td><td>留空</td><td>必须留空，注册机才会每次从 MailManage 原子领取唯一邮箱。</td></tr>
+            <tr><td>绑定失败释放回 safe 池</td><td>默认关闭</td><td>关闭最稳健，失败也消费邮箱。确认失败不会污染邮箱时再开启。</td></tr>
+            <tr><td>失败回收租约秒数</td><td><code>1800</code></td><td>只在开启失败回收时使用。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>配置对照</h2></div>
+      <p class="muted">如果你之前按原 MailManage 页面配置过注册机，迁移到本地后台时主要差异如下。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>配置项</th><th>原站常见配置</th><th>本地后台配置</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>邮箱提供商</td><td>MailManage</td><td>MailManage</td><td>保持一致。</td></tr>
+            <tr><td>API Key</td><td><code>mak_xxx</code></td><td><code>mak_xxx</code></td><td>在本地 API 中心重新生成，不能直接假设原站 Key 可用。</td></tr>
+            <tr><td>Base URL</td><td><code>https://mailmanage.lizaliza.top</code></td><td><code>http://127.0.0.1:8009</code> 或 <code>http://127.0.0.1:8009</code></td><td>这是最容易漏的项。注册机必须指向本后台，不要再指向原站。</td></tr>
+            <tr><td>分类</td><td><code>safe</code> / <code>free</code> / <code>套餐</code></td><td><code>safe</code> / <code>free</code> / <code>套餐</code> / <code>used</code></td><td>注册机通常填 safe；used 只用于查看已消费邮箱。</td></tr>
+            <tr><td>关键词</td><td><code>gpt</code></td><td><code>code,验证码,verification code,OpenAI,ChatGPT,gpt</code></td><td>新配置更稳健：先按验证码词命中，再兼容 OpenAI/ChatGPT/gpt。</td></tr>
+            <tr><td>并发</td><td>由注册机线程数决定</td><td>仍由注册机线程数决定</td><td>API 没有 concurrency 参数。并发 5 就是 5 个 worker 同时各调用一次 reserve。</td></tr>
+            <tr><td>领取方式</td><td>常见是列表取一个邮箱</td><td><code>POST /api/mailboxes/reserve</code></td><td>本地后台默认领取即 used，专门防并发重复。</td></tr>
+            <tr><td>已用处理</td><td>可能依赖本地 used 文件或成功后 mark</td><td>服务器领取时已标记 used</td><td>本地 used 文件只是日志，不是主防线。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>推荐流程</h2></div>
+      <p class="muted">并发注册时，用领取即消费模式。邮箱返回前，后台已经把它改成 <code>used</code>，所以页面不刷新、本地 used 文件写入失败、程序重启，都不会重复发出同一个 safe 邮箱。</p>
+      <pre class="log-box compact">POST /api/mailboxes/reserve
+
+{"category":"safe","consume":true}</pre>
+      <pre class="log-box compact">{
+  "ok": true,
+  "email": "user@hotmail.com",
+  "consumed": true,
+  "mailbox": {
+    "email": "user@hotmail.com",
+    "category": "used",
+    "status": "used",
+    "used": 1,
+    "reserved": 0
+  }
+}</pre>
+      <p class="muted">然后轮询验证码：</p>
+      <pre class="log-box compact">GET /api/mail/code?email=user@hotmail.com&amp;keyword=code,验证码,verification code,OpenAI,ChatGPT,gpt&amp;limit=10&amp;folders=inbox,junk</pre>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>防重复机制</h2></div>
+      <p class="muted">只要注册机用 <code>POST /api/mailboxes/reserve</code> 且 <code>consume=true</code>，邮箱会在返回给注册机之前自动离开 safe 池。这个动作发生在数据库事务里，不依赖网页刷新，也不依赖本地 <code>used_emails.json</code>。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>阶段</th><th>数据库状态</th><th>效果</th></tr></thead>
+          <tbody>
+            <tr><td>领取前</td><td><code>category=safe, used=0, reserved=0</code></td><td>可以被 safe 池领取。</td></tr>
+            <tr><td>reserve 返回前</td><td><code>category=used, status=used, used=1, reserved=0</code></td><td>已经从 safe 池剔除。</td></tr>
+            <tr><td>后续并发领取</td><td>查询条件会排除 <code>used=1</code></td><td>不会再把这个邮箱发给其他 worker。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">如果你开启 <code>consume=false</code> 租约模式，邮箱不会立刻变成 used，而是进入 reserved 状态；成功后必须调用 <code>mark-used</code>，失败后按策略调用 <code>release</code>。高并发注册默认不要用租约模式。</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>历史 used 复查</h2></div>
+      <p class="muted">如果早期规则误把账号归到 <code>used</code>，不要把 used 混进 safe 自动扫描，也不要自动全部恢复。控制台提供 <code>复查全部 used</code>，会复查所有历史已用池，不是只扫当前页；复核后仍保持 used，确认是误判后再多选账号点 <code>恢复选中为 safe</code>。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>动作</th><th>用途</th><th>是否重新进入 safe 池</th></tr></thead>
+          <tbody>
+            <tr><td><code>复检 safe</code></td><td>日常维护，只扫描可分配邮箱。</td><td>原本就在 safe。</td></tr>
+            <tr><td><code>复查全部 used</code></td><td>排查历史误判，允许扫描所有 used=1 的邮箱。</td><td>不会自动恢复。</td></tr>
+            <tr><td><code>恢复选中为 safe</code></td><td>人工确认后，把选中账号清除 used/reserved/lease 并重置收码健康。</td><td>会重新进入 safe。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>并发配置</h2></div>
+      <p class="muted">并发不是填给 MailOps API 的参数，而是注册机自己的 worker/线程/任务数量。MailOps 只负责保证每个 worker 通过 <code>reserve</code> 拿到的邮箱唯一。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>场景</th><th>推荐值</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>刚开始实测</td><td><code>3</code></td><td>先确认验证码、注册流程和失败上报都正常。</td></tr>
+            <tr><td>稳定跑批</td><td><code>5-10</code></td><td>邮箱 API、目标站、网络都稳定后再提高。</td></tr>
+            <tr><td>大量并发</td><td><code>10+</code></td><td>可以领唯一邮箱，但目标站发码和 Outlook 刷新可能限速，建议逐步加。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <pre class="log-box compact">worker_1 -> POST /api/mailboxes/reserve -> email A -> 只轮询 email A 的验证码
+worker_2 -> POST /api/mailboxes/reserve -> email B -> 只轮询 email B 的验证码
+worker_3 -> POST /api/mailboxes/reserve -> email C -> 只轮询 email C 的验证码</pre>
+      <p class="muted">不要用 <code>GET /api/mailboxes</code> 拉一批邮箱再在本地分配；多进程、多机器或重启时很容易重复。所有并发 worker 都必须即时调用 <code>POST /api/mailboxes/reserve</code>。</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>验证码关键词</h2></div>
+      <p class="muted">关键词不是最终验证码，验证码仍然由系统从邮件正文里提取 4-8 位数字。关键词只是先筛选"哪封邮件可能是验证码邮件"。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>优先级</th><th>关键词</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td>最高</td><td><code>code,验证码,verification code</code></td><td>最直接命中验证码邮件标题和正文。</td></tr>
+            <tr><td>高</td><td><code>OpenAI,ChatGPT</code></td><td>命中发件服务或产品名。</td></tr>
+            <tr><td>兼容</td><td><code>gpt</code></td><td>兼容原 MailManage 配置，但单独使用可能漏掉只写 verification code 的邮件。</td></tr>
+            <tr><td>调试</td><td>留空</td><td>不按关键词过滤，只从最新邮件里提取数字，容易误判旧码，不建议实战默认使用。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">使用推荐组合时，系统会同时要求"服务词"与"验证码词"命中：例如 OpenAI/ChatGPT/gpt 加上 code/验证码/verification code。只有普通 code 和数字、不含 OpenAI/ChatGPT/gpt 的邮件不会被当成验证码。</p>
+      <pre class="log-box compact">推荐：
+GET /api/mail/code?email=user@hotmail.com&amp;keyword=code,验证码,verification code,OpenAI,ChatGPT,gpt&amp;limit=10&amp;folders=inbox,junk
+
+兼容旧配置：
+GET /api/mail/code?email=user@hotmail.com&amp;keyword=gpt&amp;limit=10</pre>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>接口总览</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>方法</th><th>路径</th><th>用途</th><th>注册机是否推荐</th></tr></thead>
+          <tbody>
+            <tr><td>POST</td><td><code>/api/mailboxes/reserve</code></td><td>并发安全领取邮箱</td><td>推荐</td></tr>
+            <tr><td>GET</td><td><code>/api/mail/code</code></td><td>查询验证码</td><td>推荐</td></tr>
+            <tr><td>GET</td><td><code>/api/mail/{email}</code></td><td>兼容原站旧文档的验证码查询写法</td><td>兼容</td></tr>
+            <tr><td>POST</td><td><code>/api/mailboxes/mark-used</code></td><td>标记已用，租约模式成功后调用</td><td>可选</td></tr>
+            <tr><td>POST</td><td><code>/api/mailboxes/release</code></td><td>释放未消费租约</td><td>租约模式可用</td></tr>
+            <tr><td>POST</td><td><code>/api/gpt-accounts/report</code></td><td>注册机上报成功/失败的 GPT 账号</td><td>推荐</td></tr>
+            <tr><td>GET</td><td><code>/api/mailboxes</code></td><td>查看邮箱列表</td><td>不要用于分配</td></tr>
+            <tr><td>POST</td><td><code>/api/gpt-accounts/export</code></td><td>把已过 GPT 账号打包导出为 Sub2 或 CPA 压缩包</td><td>后台操作</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>领取邮箱</h2></div>
+      <pre class="log-box compact">POST /api/mailboxes/reserve</pre>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>类型</th><th>默认</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>category</code></td><td>string</td><td><code>safe</code></td><td>领取哪个分类的邮箱，例如 safe、free、套餐。</td></tr>
+            <tr><td><code>status</code></td><td>string</td><td>空</td><td>可选，进一步按状态过滤。</td></tr>
+            <tr><td><code>consume</code></td><td>boolean</td><td><code>true</code></td><td>推荐 true。返回邮箱前直接标记 used。</td></tr>
+            <tr><td><code>lease_seconds</code></td><td>number</td><td><code>1800</code></td><td>仅 consume=false 时有意义。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <pre class="log-box compact">curl -X POST "http://127.0.0.1:8009/api/mailboxes/reserve" ^
+  -H "Authorization: Bearer mak_xxx" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"category\":\"safe\",\"consume\":true}"</pre>
+      <p class="muted">无可用邮箱时：</p>
+      <pre class="log-box compact">{"ok":true,"mailbox":null,"email":"","reason":"no_available","error":"no available mailbox"}</pre>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>租约模式</h2></div>
+      <p class="muted">如果你想"失败后释放回池"，可以关闭领取即消费。这个模式会返回 <code>lease_token</code>，成功后 mark-used，失败后 release。高并发注册默认不建议用它，因为失败释放策略要由调用方管理。</p>
+      <pre class="log-box compact">POST /api/mailboxes/reserve
+
+{"category":"safe","consume":false,"lease_seconds":1800}</pre>
+      <pre class="log-box compact">POST /api/mailboxes/mark-used
+
+{"email":"user@hotmail.com","lease_token":"returned_token"}</pre>
+      <pre class="log-box compact">POST /api/mailboxes/release
+
+{"email":"user@hotmail.com","lease_token":"returned_token"}</pre>
+      <p class="muted">注册机如何知道失败：Phase2 绑定/上传结束后会得到 <code>oauth_result.ok</code>。成功时调用 mark-used；失败时如果开启"绑定失败释放回 safe 池"，注册机会调用 release。默认关闭失败回收，因为某些失败代表邮箱本身不可用或已经注册，回池后可能反复失败。若进程异常退出没有 release，租约到期后后台会自动释放，默认 1800 秒。</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>查询验证码</h2></div>
+      <pre class="log-box compact">GET /api/mail/code?email=user@hotmail.com&amp;keyword=code,验证码,verification code,OpenAI,ChatGPT,gpt&amp;limit=10&amp;folders=inbox,junk</pre>
+      <p class="muted">兼容原站旧文档写法：<code>GET /api/mail/user@hotmail.com&amp;keyword=gpt&amp;limit=10</code>。新项目推荐继续使用上面的标准 query 写法。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>参数</th><th>默认</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>email</code></td><td>必填</td><td>刚领取到的邮箱。</td></tr>
+            <tr><td><code>keyword</code></td><td>空</td><td>邮件关键词。推荐 <code>code,验证码,verification code,OpenAI,ChatGPT,gpt</code>；推荐组合会同时匹配服务词和验证码词，再提取 4-8 位数字验证码，避免普通 code 邮件误判。</td></tr>
+            <tr><td><code>limit</code></td><td><code>10</code></td><td>实时拉取并检查最近多少封邮件，最多 50。</td></tr>
+            <tr><td><code>refresh</code></td><td><code>1</code></td><td>默认实时刷新 Outlook/Hotmail 后再提码。传 <code>0</code> 时只读本地缓存。</td></tr>
+            <tr><td><code>folders</code></td><td><code>inbox,junk</code></td><td>默认同时检查收件箱和垃圾箱，避免误判"没收到码"。</td></tr>
+            <tr><td><code>include_old</code></td><td><code>0</code></td><td>默认只认领取/预留之后的新验证码，防止老验证码被误判。调试历史邮件时才传 1。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <pre class="log-box compact">curl -H "Authorization: Bearer mak_xxx" "http://127.0.0.1:8009/api/mail/code?email=user@hotmail.com&amp;keyword=code,验证码,verification code,OpenAI,ChatGPT,gpt&amp;limit=10&amp;folders=inbox,junk"</pre>
+      <p class="muted">每次 <code>found=false</code> 都会被后台记为一次真实收码未命中。默认 6 次未命中或连续 120 秒仍没有验证码时，后台自动把邮箱标记为 <code>no_code</code>，从后续 safe 领取池排除。</p>
+      <pre class="log-box compact">{
+  "ok": true,
+  "email": "user@hotmail.com",
+  "code": "123456",
+  "found": true,
+  "category": "used",
+  "refreshed": true,
+  "refresh_error": "",
+  "code_health": "healthy",
+  "poll_count": 0,
+  "quarantined": false,
+  "message": {
+    "subject": "...",
+    "from_addr": "...",
+    "body_preview": "..."
+  }
+}</pre>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>收码失败上报</h2></div>
+      <p class="muted">扫描历史邮件不能证明邮箱未来一定能收到验证码。可靠判定来自真实注册发码：如果多次轮询收件箱和垃圾箱仍没有验证码，后台会自动隔离；注册机最终超时时仍应上报一次，便于立即写入失败原因。</p>
+      <pre class="log-box compact">POST /api/mailboxes/report-code
+{"email":"user@hotmail.com","result":"timeout","detail":"300s 内未收到验证码"}</pre>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>result</code></td><td><code>success</code> 表示收到码；<code>pending</code> 表示一次轮询未命中；<code>timeout</code> / <code>no_code</code> 表示最终没收到码。</td></tr>
+            <tr><td><code>threshold</code></td><td>失败多少次后隔离，默认 1。注册机实战默认 1 次，因为发码已经经过轮询和重发。</td></tr>
+            <tr><td><code>lease_token</code></td><td>租约模式可带上；领取即消费模式不需要。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">隔离后的邮箱会显示在 <code>no_code</code> 分类；普通 <code>safe</code> 查询和 reserve 领取会自动跳过。</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>GPT 账号上报</h2></div>
+      <p class="muted">注册机完成一次账号流程后，把结果上报到 <code>/api/gpt-accounts/report</code>。这个接口不影响邮箱领取、收码、扫描链路，只负责把注册结果沉淀到"GPT账号"仓库，后续可以按 Sub2 或 CPA 格式导出。</p>
+      <pre class="log-box compact">POST /api/gpt-accounts/report
+Authorization: Bearer mak_xxx
+Content-Type: application/json</pre>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>必填</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>dedupe_key</code></td><td>推荐</td><td>幂等键。建议用注册批次 + 登录邮箱；同一个键重复上报会更新同一条记录，不会生成重复账号。</td></tr>
+            <tr><td><code>result</code></td><td>是</td><td><code>success</code>、<code>partial</code>、<code>failed</code>。成功进入待导出，失败进入失败/异常池。</td></tr>
+            <tr><td><code>stage</code></td><td>否</td><td>注册机当前阶段，例如 <code>registered</code>、<code>sub2_uploaded</code>、<code>bind_failed</code>。</td></tr>
+            <tr><td><code>email</code></td><td>推荐</td><td>本次消费的邮箱，用于和邮箱池对账。</td></tr>
+            <tr><td><code>account</code></td><td>推荐</td><td>账号主体，支持 <code>email</code>、<code>password</code>、<code>phone</code>、<code>proxy</code>、<code>batch_id</code> 等字段。</td></tr>
+            <tr><td><code>tokens</code></td><td>按需</td><td>刷新凭证或会话字段，例如 <code>refresh_token</code>、<code>access_token</code>、<code>expires_at</code>。</td></tr>
+            <tr><td><code>chatgpt</code></td><td>按需</td><td>ChatGPT 侧信息，例如 <code>plan</code>、<code>account_id</code>、<code>team_id</code>。</td></tr>
+            <tr><td><code>sub2</code></td><td>按需</td><td>Sub2 上传结果，例如 <code>id</code>、<code>group</code>、<code>proxy_id</code>。</td></tr>
+            <tr><td><code>auth_file</code></td><td>推荐</td><td>CPA/CLIProxyAPI 可直接使用的完整 auth JSON。注册机如果已经拿到 access_token、refresh_token、id_token、session_token，建议完整上报。</td></tr>
+            <tr><td><code>cpa</code></td><td>按需</td><td>可放 <code>{"ready":true,"auth_file":{...}}</code>；缺字段时仍可入库，但会标记为待补全。</td></tr>
+            <tr><td><code>error</code></td><td>失败时</td><td>失败原因。系统会粗分为验证码、代理、账号密码、风控、Sub2、CPA、未知等类别。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <pre class="log-box compact">{
+  "dedupe_key": "batch-001:user@example.com",
+  "result": "success",
+  "stage": "sub2_uploaded",
+  "email": "mailbox@outlook.com",
+  "account": {
+    "email": "user@example.com",
+    "password": "account_password",
+    "proxy": "http://127.0.0.1:7892",
+    "batch_id": "batch-001"
+  },
+  "tokens": {
+    "refresh_token": "rt_xxx",
+    "expires_at": 1790000000
+  },
+  "chatgpt": {
+    "plan": "free",
+    "account_id": "acct_xxx"
+  },
+  "sub2": {
+    "id": "sub2_account_id",
+    "group": "测试生图"
+  },
+  "auth_file": {
+    "type": "codex",
+    "email": "user@example.com",
+    "access_token": "at_xxx",
+    "refresh_token": "rt_xxx",
+    "id_token": "id_xxx",
+    "session_token": "sess_xxx",
+    "chatgpt_account_id": "acct_xxx",
+    "chatgpt_plan_type": "free"
+  },
+  "cpa": {
+    "ready": true
+  }
+}</pre>
+      <p class="muted">状态流转规则：<code>success</code> 进入 <code>待导出</code>；<code>partial</code> 进入 <code>异常待处理</code>；<code>failed</code> 进入 <code>注册失败</code>。导出成功后可自动标记 <code>已导出</code>，也可以在页面手动归档。</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>GPT 账号导出</h2></div>
+      <p class="muted">导出在后台"GPT账号"页面操作：跨页勾选账号后选择 Sub2 或 CPA。系统会下载 <code>sub2-数量.zip</code> 或 <code>cpa-数量.zip</code>，压缩包内包含目标平台 JSON、完整账号信息 JSON、账号 CSV 和 manifest。导出成功后默认标记为 <code>已导出</code>，避免同一批账号重复对账。</p>
+      <pre class="log-box compact">POST /api/gpt-accounts/export
+Content-Type: application/json
+
+{
+  "ids": [1, 2, 3],
+  "format": "sub2",
+  "mark_exported": true
+}</pre>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>格式</th><th>产物</th><th>适用场景</th></tr></thead>
+          <tbody>
+            <tr><td><code>sub2</code></td><td>ZIP，内含 <code>sub2.json</code>、<code>accounts-full.json</code>、<code>accounts.csv</code>、<code>manifest.json</code></td><td>导入 Sub2 / Sub2API 账号仓库，同时保留完整账号资料。</td></tr>
+            <tr><td><code>cpa</code></td><td>ZIP，内含 <code>cpa.json</code>、<code>accounts-full.json</code>、<code>accounts.csv</code>、<code>manifest.json</code></td><td>给 CPA/CLIProxyAPI 或后续刷新工作台使用，同时保留完整账号资料。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>GPT 工作台</h2></div>
+      <p class="muted">MailOps 保留现有邮箱池核心功能，同时把参考项目的后续能力合并到后台 <code>GPT账号</code> 页面。所有操作都在当前后台完成，不需要跳转到参考项目独立页面。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>后台模块</th><th>作用</th><th>关键配置</th></tr></thead>
+          <tbody>
+            <tr><td>账号仓库</td><td>接收注册机上报、手动导入 GPT 账号、跨页选择、导出 Sub2/CPA。</td><td>注册机成功后调用 <code>/api/gpt-accounts/report</code>。</td></tr>
+            <tr><td>凭证刷新</td><td>同步 MailOps 邮箱 OAuth 凭证，按选中 GPT 账号逐个执行 OpenAI OAuth 登录刷新，并生成 CPA auth JSON。</td><td>必须填写 NAS/服务器可访问 ChatGPT/OpenAI 的代理；可选 CPA 地址和管理 Key，填写后刷新成功自动上传。</td></tr>
+            <tr><td>CPA 仓库</td><td>扫描 CPA/CLIProxyAPI auth 仓库，诊断 401、RT 失效、封禁、风控、额度异常，可删除异常凭证或加入刷新。</td><td>填写 CPA 管理地址和管理 Key；可选代理探测。</td></tr>
+            <tr><td>Session 转换</td><td>把 ChatGPT Web Session 转为 Sub2、CPA、Cockpit、9router、AxonHub、Codex-Manager JSON，并可导入 GPT 仓库。</td><td>只做格式转换，不读取邮箱池。</td></tr>
+            <tr><td>规则与手机池</td><td>维护错误分类规则和长效手机接码 API，给后续异常处理和手机验证留痕。</td><td>手机接码 API 可在刷新工作台填写或从手机池记录。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">NAS 部署时这些刷新和巡检动作由 NAS 发起请求，VPS 只负责公网 HTTPS 转发，不负责访问 ChatGPT/OpenAI。若 NAS 使用 Clash，代理应填 NAS 容器可访问的代理地址，例如宿主机局域网 IP + HTTP/SOCKS 端口。</p>
+      <p class="muted">后台巡接口只给网页登录后的控制台使用，不给注册机直接使用：<code>/api/gpt-workbench/sync-mailboxes</code>、<code>/api/gpt-workbench/proxy-check</code>、<code>/api/gpt-workbench/refresh-start</code>、<code>/api/gpt-workbench/refresh-status</code>、<code>/api/gpt-workbench/cpa-scan</code>、<code>/api/gpt-workbench/cpa-delete</code>。</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>列表查询</h2></div>
+      <p class="muted"><code>GET /api/mailboxes</code> 只用于查看，不用于并发分配。默认排除 <code>used=1</code>、<code>reserved=1</code> 和 <code>no_code</code> 收码异常邮箱。</p>
+      <pre class="log-box compact">GET /api/mailboxes?category=safe&amp;page=1&amp;limit=100
+GET /api/mailboxes?category=used
+GET /api/mailboxes?search=hotmail&amp;include_used=1&amp;include_reserved=1</pre>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>参数</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>category</code></td><td>按分类筛选。</td></tr>
+            <tr><td><code>status</code></td><td>按状态筛选。</td></tr>
+            <tr><td><code>search</code></td><td>搜索邮箱、标签或原因。</td></tr>
+            <tr><td><code>page</code> / <code>limit</code></td><td>分页。</td></tr>
+            <tr><td><code>include_used</code></td><td>设为 1 时包含已用邮箱。</td></tr>
+            <tr><td><code>include_reserved</code></td><td>设为 1 时包含已预留邮箱。</td></tr>
+            <tr><td><code>include_unhealthy</code></td><td>设为 1 时包含收码异常邮箱；查看 <code>category=no_code</code> 时会自动包含。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Python 示例</h2></div>
+      <pre class="log-box compact">import time
+import requests
+
+BASE_URL = "http://127.0.0.1:8009"
+API_KEY = "mak_xxx"
+HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+
+r = requests.post(
+    f"{BASE_URL}/api/mailboxes/reserve",
+    headers=HEADERS,
+    json={"category": "safe", "consume": True},
+    timeout=30,
+).json()
+
+if not r.get("email"):
+    raise RuntimeError("没有可用邮箱")
+
+email = r["email"]
+
+# 这里提交绑定邮箱给目标系统，然后等待邮件进入缓存
+time.sleep(15)
+
+code = requests.get(
+    f"{BASE_URL}/api/mail/code",
+    headers=HEADERS,
+    params={"email": email, "keyword": "code,验证码,verification code,OpenAI,ChatGPT,gpt", "limit": 10, "folders": "inbox,junk"},
+    timeout=30,
+).json()
+
+print(email, code.get("code"))</pre>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>错误处理</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>状态</th><th>含义</th><th>处理</th></tr></thead>
+          <tbody>
+            <tr><td>401</td><td>API Key 缺失或错误</td><td>检查 Authorization。</td></tr>
+            <tr><td>404</td><td>邮箱不存在或接口不存在</td><td>确认 base_url 指向本后台。</td></tr>
+            <tr><td>409</td><td>扫描或并发状态冲突</td><td>稍后重试。</td></tr>
+            <tr><td>200 + <code>email=""</code></td><td>目标分类已耗尽</td><td>补充邮箱或换分类。</td></tr>
+            <tr><td>200 + <code>found=false</code></td><td>暂未找到验证码</td><td>继续轮询或重新扫描邮箱。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

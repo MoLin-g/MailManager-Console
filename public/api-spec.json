@@ -1,0 +1,630 @@
+{
+  "name": "MailOps Console API",
+  "version": "0.4",
+  "base_url_default": "http://127.0.0.1:8009",
+  "auth": {
+    "type": "bearer",
+    "header": "Authorization",
+    "format": "Bearer mak_xxx",
+    "content_type": "application/json"
+  },
+  "ai_instructions": {
+    "primary_goal": "Allocate Outlook/Hotmail mailboxes for concurrent registration workers and read cached verification codes.",
+    "allocation_rule": "Use POST /api/mailboxes/reserve for allocation. Never allocate by reading GET /api/mailboxes.",
+    "recommended_mode": "consume_on_reserve",
+    "consume_on_reserve": "Send consume=true. The server marks the selected mailbox as category=used,status=used,used=1 before returning it, so concurrent workers cannot receive the same mailbox.",
+    "local_used_file": "Local used_emails.json is only a fallback log. Do not rely on it for duplicate prevention.",
+    "browser_vs_api_auth": "The web console uses username/password session cookies. Registration workers and external automation must use Bearer API keys only.",
+    "empty_pool_handling": "If reserve returns ok=true and email is empty, stop the current registration batch or switch category; do not keep polling reserve in a tight loop.",
+    "code_polling": "After submitting the returned email to the target system, wait 10-20 seconds, then poll /api/mail/code with the same email. By default each poll refreshes inbox and junk before extracting the code. If found=false, keep polling the same email until timeout; do not reserve another mailbox for the same registration attempt.",
+    "compatibility": "The original MailManage public docs use GET /api/mail/{email}&keyword=gpt&limit=10. This server supports that alias, but new clients should use GET /api/mail/code with keyword=code,验证码,verification code,OpenAI,ChatGPT,gpt and folders=inbox,junk.",
+    "failure_recycle_policy": "Default mode is consume=true, so failed binding attempts still consume the mailbox. This avoids reusing mailboxes that may be bad or already registered. If the caller wants failed attempts to return to the safe pool, it must use consume=false, keep the returned lease_token, call /api/mailboxes/mark-used when Phase2 succeeds, and call /api/mailboxes/release when Phase2 fails. If the caller crashes before release, the lease expires automatically; default lease_seconds is 1800.",
+    "code_health_rule": "Historical scanning only proves the account can be read; it cannot prove future OpenAI delivery. /api/mail/code now records every not-found poll. After 6 misses or 120 seconds without a code, the server automatically marks the mailbox code_health=no_code, category=no_code, and excludes it from future reserve/list calls. Clients should still call POST /api/mailboxes/report-code with result=timeout/no_code on final timeout for immediate quarantine.",
+    "base_url_rule": "Choose the URL reachable from the registration machine. Do not point the registration machine back to the original mailmanage.lizaliza.top site.",
+    "concurrency_rule": "Concurrency is controlled by the caller. For N concurrent registrations, run N workers; each worker calls POST /api/mailboxes/reserve and receives a unique mailbox because the server uses an atomic transaction.",
+    "worker_rule": "A worker must keep polling the same email it reserved. If /api/mail/code returns found=false, wait poll_interval_seconds and retry the same email until timeout. Do not reserve another email for the same attempt unless the attempt is fully abandoned.",
+    "keyword_rule": "Use keyword=\"code,验证码,verification code,OpenAI,ChatGPT,gpt\" by default. When both service words (OpenAI/ChatGPT/gpt) and code-hint words (code/验证码/verification code) are present, the server requires both groups to match before extracting a 4-8 digit numeric code. This avoids false positives from unrelated emails containing code plus a number.",
+    "final_timeout_rule": "When the real registration flow times out without a code, call POST /api/mailboxes/report-code with result=timeout so the mailbox is quarantined as no_code.",
+    "safe_removal_rule": "With POST /api/mailboxes/reserve and consume=true, the selected mailbox is removed from the safe pool before the response is returned: category=used,status=used,used=1,reserved=0. This is the duplicate-prevention mechanism and does not depend on page refreshes or local used files.",
+    "gpt_account_report_rule": "After a registration attempt finishes, call POST /api/gpt-accounts/report with result=success, partial, or failed. This writes the GPT account warehouse and does not alter mailbox allocation or mail-code behavior.",
+    "gpt_account_dedupe_rule": "Set dedupe_key to a stable registration batch + login email value. Reposting the same dedupe_key updates the existing GPT account record instead of creating duplicates.",
+    "gpt_account_export_rule": "Use the web console GPT账号 page to select accounts across pages and export them as Cockpit Tools, Sub2API, or CPA packages. Cockpit Tools and CPA use Cockpit portable token storage; CPA multi-account export is split into one JSON per account. Sub2API export uses type=sub2api-data/version=1. Every package also includes account-info/accounts-{count}.json with the original registration account records.",
+    "gpt_workbench_rule": "Advanced GPT account workflows are native panels inside the MailOps GPT账号 page: account warehouse, OAuth credential refresh, CPA warehouse scan/delete, Session converter, phone pool, rules, queues, and logs. Do not send users to the old reference pages."
+  },
+  "register_machine_config": {
+    "email_provider": "mailmanage",
+    "mailmanage": {
+      "base_url": "http://127.0.0.1:8009",
+      "api_key": "mak_xxx",
+      "category": "safe",
+      "keyword": "code,验证码,verification code,OpenAI,ChatGPT,gpt",
+      "folders": "inbox,junk",
+      "consume": true,
+      "poll_interval_seconds": 8,
+      "poll_timeout_seconds": 180
+    },
+    "gptmail_report": {
+      "enabled": true,
+      "base_url": "http://127.0.0.1:8009",
+      "api_key": "mak_xxx",
+      "endpoint": "/api/gpt-accounts/report",
+      "dedupe_key_rule": "batch_id + login_email",
+      "spool_dir": "data/gptmail_report_queue"
+    },
+    "concurrency": 5
+  },
+  "endpoints": [
+    {
+      "id": "reserve_mailbox",
+      "method": "POST",
+      "path": "/api/mailboxes/reserve",
+      "purpose": "Atomically allocate one mailbox for a registration worker.",
+      "recommended_for_allocation": true,
+      "body": {
+        "category": {
+          "type": "string",
+          "default": "safe",
+          "description": "Mailbox category to consume, for example safe, free, or 套餐."
+        },
+        "status": {
+          "type": "string",
+          "default": "",
+          "description": "Optional status filter."
+        },
+        "consume": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, mark the mailbox used before returning it. Recommended for concurrent registration."
+        },
+        "lease_seconds": {
+          "type": "integer",
+          "default": 1800,
+          "description": "Lease duration when consume=false."
+        }
+      },
+      "success_response": {
+        "ok": true,
+        "email": "user@hotmail.com",
+        "consumed": true,
+        "mailbox": {
+          "email": "user@hotmail.com",
+          "category": "used",
+          "status": "used",
+          "used": 1,
+          "reserved": 0
+        }
+      },
+      "empty_response": {
+        "ok": true,
+        "mailbox": null,
+        "email": "",
+        "reason": "no_available",
+        "error": "no available mailbox"
+      }
+    },
+    {
+      "id": "get_mail_code",
+      "method": "GET",
+      "path": "/api/mail/code",
+      "purpose": "Refresh the mailbox from Outlook/Hotmail by default, then read a 4-8 digit verification code.",
+      "query": {
+        "email": {
+          "type": "string",
+          "required": true,
+          "description": "Mailbox returned by reserve."
+        },
+        "keyword": {
+          "type": "string",
+          "default": "code,验证码,verification code,OpenAI,ChatGPT,gpt",
+          "description": "Recommended: code,验证码,verification code,OpenAI,ChatGPT,gpt. With this recommended mix, the server requires both a service word and a code-hint word before extracting a 4-8 digit numeric code."
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10,
+          "max": 50,
+          "description": "Number of recent messages to fetch and inspect."
+        },
+        "refresh": {
+          "type": "boolean-like",
+          "default": "1",
+          "description": "When enabled, fetch latest Outlook/Hotmail messages before extracting the code. Set refresh=0 to inspect cached messages only."
+        },
+        "folders": {
+          "type": "comma-separated string",
+          "default": "inbox,junk",
+          "description": "Mailbox folders to refresh and inspect. Default checks inbox and junk to avoid false no-code judgments."
+        },
+        "include_old": {
+          "type": "boolean-like",
+          "default": "0",
+          "description": "By default only messages received after reserve/lease time minus grace_seconds are accepted, preventing stale verification codes from being treated as success."
+        },
+        "grace_seconds": {
+          "type": "integer",
+          "default": 120,
+          "description": "Small time grace before reserve/lease time when filtering stale messages."
+        }
+      },
+      "success_response": {
+        "ok": true,
+        "email": "user@hotmail.com",
+        "code": "123456",
+        "found": true,
+        "category": "used",
+        "refreshed": true,
+        "refresh_error": "",
+        "message": {
+          "subject": "Verification code",
+          "from_addr": "noreply@example.com",
+          "body_preview": "Your code is 123456"
+        }
+      },
+      "not_found_response": {
+        "ok": true,
+        "email": "user@hotmail.com",
+        "code": "",
+        "found": false,
+        "message": null,
+        "code_health": "suspect",
+        "poll_count": 1,
+        "poll_elapsed": 0,
+        "quarantined": false
+      },
+      "auto_quarantine_response": {
+        "ok": true,
+        "email": "user@hotmail.com",
+        "code": "",
+        "found": false,
+        "code_health": "no_code",
+        "poll_count": 6,
+        "poll_elapsed": 120,
+        "quarantined": true
+      },
+      "example": "/api/mail/code?email=user@hotmail.com&keyword=code,验证码,verification code,OpenAI,ChatGPT,gpt&limit=10&folders=inbox,junk"
+    },
+    {
+      "id": "get_mail_code_compat",
+      "method": "GET",
+      "path": "/api/mail/{email}",
+      "purpose": "Compatibility alias for the original MailManage public API docs. Supports keyword and limit as either real query parameters or the old path suffix style.",
+      "recommended_for_new_clients": false,
+      "example": "/api/mail/user@hotmail.com&keyword=gpt&limit=10",
+      "equivalent_to": "/api/mail/code?email=user@hotmail.com&keyword=gpt&limit=10",
+      "note": "Supported only for compatibility. New clients should use the standard /api/mail/code query form and the recommended keyword string."
+    },
+    {
+      "id": "mark_used",
+      "method": "POST",
+      "path": "/api/mailboxes/mark-used",
+      "purpose": "Mark a mailbox used. Mainly for consume=false lease mode or compatibility.",
+      "body": {
+        "email": {
+          "type": "string",
+          "required": true
+        },
+        "lease_token": {
+          "type": "string",
+          "required": false
+        }
+      }
+    },
+    {
+      "id": "report_code_result",
+      "method": "POST",
+      "path": "/api/mailboxes/report-code",
+      "purpose": "Report whether a real registration attempt received a verification code. Use this to quarantine mailboxes that cannot receive codes.",
+      "body": {
+        "email": {
+          "type": "string",
+          "required": true
+        },
+        "result": {
+          "type": "string",
+          "required": true,
+          "allowed": [
+            "success",
+            "pending",
+            "timeout",
+            "no_code"
+          ]
+        },
+        "detail": {
+          "type": "string",
+          "required": false
+        },
+        "threshold": {
+          "type": "integer",
+          "default": 1,
+          "description": "Number of failures before category/status becomes no_code."
+        },
+        "lease_token": {
+          "type": "string",
+          "required": false
+        }
+      },
+      "timeout_behavior": "When result=timeout/no_code and threshold is reached, the server sets code_health=no_code, category=no_code, status=no_code, clears reservation fields, and future reserve calls skip it.",
+      "success_response": {
+        "ok": true,
+        "email": "user@hotmail.com",
+        "result": "timeout",
+        "code_health": "no_code"
+      }
+    },
+    {
+      "id": "release_mailbox",
+      "method": "POST",
+      "path": "/api/mailboxes/release",
+      "purpose": "Release a reserved mailbox back to the pool when consume=false and the attempt failed.",
+      "body": {
+        "email": {
+          "type": "string",
+          "required": true
+        },
+        "lease_token": {
+          "type": "string",
+          "required": false
+        }
+      }
+    },
+    {
+      "id": "list_mailboxes",
+      "method": "GET",
+      "path": "/api/mailboxes",
+      "purpose": "View/debug mailboxes. Do not use this endpoint for allocation in concurrent registration.",
+      "recommended_for_allocation": false,
+      "query": {
+        "category": "optional string",
+        "status": "optional string",
+        "search": "optional string",
+        "page": "optional integer",
+        "limit": "optional integer",
+        "include_used": "optional boolean-like 1/true",
+        "include_reserved": "optional boolean-like 1/true",
+        "include_unhealthy": "optional boolean-like 1/true; include code_health=no_code/unhealthy mailboxes. category=no_code enables this automatically."
+      }
+    },
+    {
+      "id": "scan_filter",
+      "method": "POST",
+      "path": "/api/scan/filter",
+      "purpose": "Web-console scan endpoint for a category/status filter. Default filtered scans exclude used/reserved accounts, so normal safe rescans do not touch consumed mailboxes.",
+      "body": {
+        "category": "safe",
+        "status": "",
+        "concurrency": 3,
+        "limit": 50,
+        "include_used": false,
+        "include_reserved": false
+      },
+      "used_recheck": "For historical false positives, call with category=used and include_used=true. This only rechecks messages and does not automatically return the account to the safe pool.",
+      "success_response": {
+        "ok": true
+      }
+    },
+    {
+      "id": "bulk_restore_safe",
+      "method": "POST",
+      "path": "/api/accounts/bulk-restore-safe",
+      "purpose": "Web-console recovery endpoint for selected historical false-positive accounts. It moves selected accounts back to safe, clears used/reserved/lease fields, and resets code health to unknown.",
+      "body": {
+        "ids": [
+          123,
+          456
+        ]
+      },
+      "warning": "Do not call this automatically from registration workers. Use it only after a human reviews which historical used accounts should return to safe.",
+      "success_response": {
+        "ok": true,
+        "requested": 2,
+        "matched": 2,
+        "restored": 2
+      }
+    },
+    {
+      "id": "report_gpt_account",
+      "method": "POST",
+      "path": "/api/gpt-accounts/report",
+      "purpose": "Registration-machine endpoint for reporting a completed GPT account attempt into the GPT account warehouse.",
+      "auth": "Bearer API key",
+      "does_not_modify": [
+        "mailbox reserve behavior",
+        "mailbox code polling behavior",
+        "safe/used/no_code pools"
+      ],
+      "body": {
+        "dedupe_key": {
+          "type": "string",
+          "required": false,
+          "recommended": true,
+          "description": "Stable idempotency key, for example batch_id + login email. Duplicate reports update the same row."
+        },
+        "result": {
+          "type": "string",
+          "required": true,
+          "allowed": [
+            "success",
+            "partial",
+            "failed"
+          ],
+          "description": "success becomes pending_export; partial becomes exception; failed becomes failed."
+        },
+        "stage": {
+          "type": "string",
+          "required": false,
+          "examples": [
+            "registered",
+            "sub2_uploaded",
+            "bind_failed"
+          ]
+        },
+        "email": {
+          "type": "string",
+          "required": false,
+          "description": "Mailbox consumed by this registration attempt. If account.email is present, account.email is stored as the GPT login account and this email is stored as bind_email for reconciliation."
+        },
+        "account": {
+          "type": "object",
+          "required": false,
+          "fields": [
+            "email",
+            "password",
+            "phone",
+            "proxy",
+            "batch_id"
+          ]
+        },
+        "tokens": {
+          "type": "object",
+          "required": false,
+          "fields": [
+            "refresh_token",
+            "access_token",
+            "id_token",
+            "session_token",
+            "expires_at"
+          ]
+        },
+        "chatgpt": {
+          "type": "object",
+          "required": false,
+          "fields": [
+            "plan",
+            "account_id",
+            "user_id",
+            "team_id"
+          ]
+        },
+        "sub2": {
+          "type": "object",
+          "required": false,
+          "fields": [
+            "id",
+            "group",
+            "proxy_id"
+          ]
+        },
+        "cpa": {
+          "type": "object",
+          "required": false,
+          "fields": [
+            "ready",
+            "missing_reason",
+            "auth_file"
+          ]
+        },
+        "error": {
+          "type": "string or object",
+          "required": false,
+          "description": "Failure detail. The server classifies common code/proxy/risk/sub2/cpa errors."
+        },
+        "auth_file": {
+          "type": "object",
+          "required": false,
+          "recommended": true,
+          "description": "CPA/CLIProxyAPI auth JSON. Recommended fields: type,email,name,access_token,refresh_token,id_token,session_token,account_id,chatgpt_account_id,plan_type,chatgpt_plan_type,expired,last_refresh."
+        }
+      },
+      "success_response": {
+        "ok": true,
+        "id": 1,
+        "created": true,
+        "status": "pending_export",
+        "error_category": "none"
+      }
+    },
+    {
+      "id": "list_gpt_accounts",
+      "method": "GET",
+      "path": "/api/gpt-accounts",
+      "purpose": "Web-console endpoint for viewing reported GPT accounts with status/result/search filters and pagination.",
+      "auth": "web console session cookie",
+      "query": {
+        "status": "optional status filter, for example pending_export/exported/exception/failed",
+        "result": "optional result filter, for example success/partial/failed",
+        "search": "optional account/email/error search",
+        "page": "optional integer",
+        "limit": "optional integer"
+      }
+    },
+    {
+      "id": "export_gpt_accounts",
+      "method": "POST",
+      "path": "/api/gpt-accounts/export",
+      "purpose": "Web-console endpoint for exporting selected GPT accounts as a ZIP package containing Cockpit Tools, Sub2API, or CPA JSON plus original account records.",
+      "auth": "web console session cookie",
+      "body": {
+        "ids": [
+          1,
+          2,
+          3
+        ],
+        "format": "sub2api, sub2, cpa, cockpit_tools, or cockpit",
+        "mark_exported": true
+      },
+      "success_response": {
+        "content_type": "application/zip",
+        "filename": "sub2-{count}.zip, cpa.zip, cpa-{count}.zip, or cockpit-tools-{count}.zip",
+        "files": [
+          "sub2-{count}.json, cpa.json/cpa/*.json, or cockpit-tools-{count}.json",
+          "account-info/accounts-{count}.json"
+        ]
+      }
+    },
+    {
+      "id": "gpt_workbench_sync_mailboxes",
+      "method": "POST",
+      "path": "/api/gpt-workbench/sync-mailboxes",
+      "purpose": "Web-console endpoint that copies MailOps Outlook OAuth mailbox credentials into the hidden refresh executor workspace. It does not modify mailbox safe/used/reserve state.",
+      "auth": "web console session cookie",
+      "body": {
+        "emails": "optional list of mailbox emails to sync; omit to sync all usable Outlook OAuth credentials for the current user",
+        "category": "optional MailOps category filter",
+        "limit": 5000
+      }
+    },
+    {
+      "id": "gpt_workbench_proxy_check",
+      "method": "POST",
+      "path": "/api/gpt-workbench/proxy-check",
+      "purpose": "Web-console endpoint for testing the proxy that the NAS/server will use for OpenAI/ChatGPT OAuth refresh.",
+      "auth": "web console session cookie",
+      "body": {
+        "proxy_url": "http://user:pass@host:port or socks5://user:pass@host:port",
+        "proxy_session": "optional sticky session label"
+      }
+    },
+    {
+      "id": "gpt_workbench_refresh_start",
+      "method": "POST",
+      "path": "/api/gpt-workbench/refresh-start",
+      "purpose": "Starts one OAuth credential refresh job for a selected GPT account. The UI runs selected accounts sequentially, not concurrently.",
+      "auth": "web console session cookie",
+      "body": {
+        "account_id": 1,
+        "proxy_url": "required proxy URL reachable from NAS/server",
+        "cpa_base_url": "optional CPA/CLIProxyAPI management base URL; if present with key, refreshed auth is uploaded",
+        "cpa_management_key": "optional CPA management key",
+        "manual_email_code": "optional manual email code",
+        "manual_phone_code": "optional manual phone code",
+        "phone_api_url": "optional long-term SMS API URL"
+      }
+    },
+    {
+      "id": "gpt_workbench_refresh_status",
+      "method": "GET",
+      "path": "/api/gpt-workbench/refresh-status",
+      "purpose": "Polls a refresh job. When a job completes successfully, MailOps writes auth_file, token fields, refresh_status, last_refresh_at, and events back to the GPT account warehouse.",
+      "auth": "web console session cookie",
+      "query": {
+        "job_id": "helper job id returned by refresh-start",
+        "account_id": "GPT account id",
+        "local_job_id": "optional MailOps local refresh job id"
+      }
+    },
+    {
+      "id": "gpt_workbench_cpa_scan",
+      "method": "POST",
+      "path": "/api/gpt-workbench/cpa-scan",
+      "purpose": "Scans CPA/CLIProxyAPI auth warehouse and returns 401, RT invalid, session expired, banned, risk, usage limit, and refreshable candidates.",
+      "auth": "web console session cookie",
+      "body": {
+        "base_url": "CPA/CLIProxyAPI management base URL",
+        "management_key": "CPA management key",
+        "max_items": 50,
+        "use_proxy": false,
+        "proxy_url": "optional probe proxy"
+      }
+    },
+    {
+      "id": "gpt_workbench_cpa_delete",
+      "method": "POST",
+      "path": "/api/gpt-workbench/cpa-delete",
+      "purpose": "Deletes selected CPA auth files from CPA/CLIProxyAPI after user confirmation.",
+      "auth": "web console session cookie",
+      "body": {
+        "base_url": "CPA/CLIProxyAPI management base URL",
+        "management_key": "CPA management key",
+        "items": "selected CPA scan result rows"
+      }
+    },
+    {
+      "id": "delete_api_key",
+      "method": "POST",
+      "path": "/api/api-keys/{id}/delete",
+      "purpose": "Web-console endpoint for deleting an API key that is no longer used.",
+      "auth": "web console session cookie",
+      "warning": "Deleting a key immediately prevents registration machines from using it. Disable first if you only want to pause it."
+    },
+    {
+      "id": "health",
+      "method": "GET",
+      "path": "/health",
+      "purpose": "Deployment health check for NAS, reverse proxy, and uptime monitoring. Does not require authentication.",
+      "success_response": {
+        "ok": true,
+        "app": "MailOps Console",
+        "database": {
+          "exists": true,
+          "quick_check": "ok"
+        }
+      }
+    }
+  ],
+  "minimal_python_client": "import time, requests\nBASE='http://127.0.0.1:8009'\nKEY='mak_xxx'\nKEYWORD='code,验证码,verification code,OpenAI,ChatGPT,gpt'\nH={'Authorization':f'Bearer {KEY}','Content-Type':'application/json'}\nr=requests.post(f'{BASE}/api/mailboxes/reserve',headers=H,json={'category':'safe','consume':True},timeout=30).json()\nif not r.get('email'): raise RuntimeError('mailbox pool exhausted')\nemail=r['email']\n# Submit this email to the target registration form, then poll only this email.\ndeadline=time.time()+180\nwhile time.time()<deadline:\n    code=requests.get(f'{BASE}/api/mail/code',headers=H,params={'email':email,'keyword':KEYWORD,'limit':10,'folders':'inbox,junk'},timeout=30).json()\n    if code.get('found'):\n        print(email, code.get('code'))\n        break\n    time.sleep(8)\nelse:\n    requests.post(f'{BASE}/api/mailboxes/report-code', headers=H, json={'email': email, 'result': 'timeout', 'detail': '180s no verification code'}, timeout=30)\n    raise RuntimeError('verification code timeout')",
+  "base_urls": {
+    "local_same_machine": "http://127.0.0.1:8009",
+    "lan_nas": "http://192.168.6.35:8009",
+    "public_https": "http://127.0.0.1:8009",
+    "rule": "Choose the URL reachable from the registration machine. Do not point the registration machine back to the original mailmanage.lizaliza.top site."
+  },
+  "recommended_code_keyword": "code,验证码,verification code,OpenAI,ChatGPT,gpt",
+  "concurrency_config": {
+    "where_to_configure": "In the registration machine worker/thread/task count, not as a MailOps API parameter.",
+    "start_value": 3,
+    "stable_value": "5-10",
+    "rule": "Each worker must call POST /api/mailboxes/reserve once for its own registration attempt. Never share one returned email across workers.",
+    "do_not": "Do not GET /api/mailboxes and split the list locally for concurrent workers."
+  },
+  "duplicate_prevention": {
+    "required_endpoint": "POST /api/mailboxes/reserve",
+    "required_body": {
+      "category": "safe",
+      "consume": true
+    },
+    "before_reserve": {
+      "category": "safe",
+      "used": 0,
+      "reserved": 0
+    },
+    "before_response": {
+      "category": "used",
+      "status": "used",
+      "used": 1,
+      "reserved": 0
+    },
+    "guarantee": "Concurrent workers cannot receive the same mailbox because selection and marking used happen inside one database transaction.",
+    "not_required": [
+      "web page refresh",
+      "local used_emails.json",
+      "manual deletion from safe"
+    ],
+    "warning": "GET /api/mailboxes is only a list/debug endpoint and must not be used to allocate mailboxes."
+  },
+  "recommended_code_keyword_note": "Recommended keyword mix is grouped internally: service words OpenAI/ChatGPT/gpt plus code-hint words code/验证码/verification code. A message containing only code and digits is not enough when service words are configured.",
+  "gpt_workbench": {
+    "ui_location": "MailOps web console -> GPT账号",
+    "panels": {
+      "账号仓库": "Reported/imported GPT accounts, cross-page selection, Sub2/CPA export, archive.",
+      "凭证刷新": "Sync MailOps mailbox OAuth credentials, test proxy, refresh selected GPT accounts sequentially, optionally upload refreshed auth to CPA.",
+      "CPA 仓库": "Scan CPA/CLIProxyAPI auth warehouse, diagnose invalid/risk/limit/banned candidates, delete selected entries or send rows to refresh.",
+      "Session 转换": "Convert ChatGPT Web Session JSON to Sub2, CPA, Cockpit, 9router, AxonHub, or Codex-Manager JSON and optionally import into the GPT warehouse.",
+      "规则与手机池": "Human-readable error classification rules and long-term phone code API records.",
+      "闃熷垪": "Local refresh and inspection task history.",
+      "瀵煎嚭鏃ュ織": "Export records and account events for reconciliation."
+    },
+    "proxy_rule": "The native panels call /api/gpt-workbench/* after web login. MailOps starts a local hidden executor process and stores its data under the MailOps data directory per web user workspace.",
+    "nas_proxy_rule": "When deployed on NAS, refresh/warehouse network requests originate from the NAS container. VPS remains only a public HTTPS forwarding exit."
+  }
+}
+
+
